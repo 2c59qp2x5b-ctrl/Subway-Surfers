@@ -12,15 +12,29 @@
     
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.4/jsoneditor.min.css" rel="stylesheet" type="text/css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.4/jsoneditor.min.js"></script>
+
     <style>
-        /* Supprime les flèches par défaut sur les inputs de type number */
-        input[type="number"]::-webkit-outer-spin-button,
-        input[type="number"]::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
+        /* Personnalisation de JSONEditor pour correspondre exactement aux captures d'écran */
+        .jsoneditor {
+            border: 1px solid #e5e7eb !important;
+            border-radius: 0.75rem !important;
+            overflow: hidden !important;
         }
-        input[type="number"] {
-            -moz-appearance: textfield;
+        .jsoneditor-menu {
+            background-color: #3b82f6 !important; /* Bleu royal de la barre d'outils */
+            border-bottom: 1px solid #3b82f6 !important;
+        }
+        .jsoneditor-navigation_bar {
+            border-bottom: 1px solid #e5e7eb !important;
+        }
+        .jsoneditor-outer {
+            border-radius: 0 0 0.75rem 0.75rem;
+        }
+        /* Nettoyage des styles natifs d'input */
+        input[type="text"] focus {
+            outline: none;
         }
     </style>
 </head>
@@ -29,9 +43,9 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useRef } = React;
+        const { useState, useRef, useEffect } = React;
 
-        // Correspondance des IDs de monnaies du jeu Subway Surfers
+        // Configuration des monnaies de Subway Surfers
         const CURRENCY_MAP = {
           "1": { name: "Coins", icon: "🪙" },
           "2": { name: "Keys", icon: "🔑" },
@@ -40,16 +54,63 @@
           "5": { name: "Headstarts", icon: "🚀" }
         };
 
+        // Composant Wrapper pour intégrer proprement JSONEditor avec React
+        function JsonTreeEditor({ value, onChange }) {
+          const containerRef = useRef(null);
+          const editorRef = useRef(null);
+          const isUpdatingRef = useRef(false);
+
+          useEffect(() => {
+            const options = {
+              mode: 'tree',
+              modes: ['text', 'tree', 'table'], 
+              onChangeJSON: (json) => {
+                if (!isUpdatingRef.current) {
+                  onChange(json);
+                }
+              },
+              onChangeText: (text) => {
+                if (!isUpdatingRef.current) {
+                  try {
+                    const json = JSON.parse(text);
+                    onChange(json);
+                  } catch (e) {}
+                }
+              }
+            };
+            
+            editorRef.current = new JSONEditor(containerRef.current, options);
+            editorRef.current.set(value);
+
+            return () => {
+              if (editorRef.current) {
+                editorRef.current.destroy();
+              }
+            };
+          }, []);
+
+          // Met à jour l'éditeur si les données changent depuis le mode "Quick Edit"
+          useEffect(() => {
+            if (editorRef.current && JSON.stringify(editorRef.current.get()) !== JSON.stringify(value)) {
+              isUpdatingRef.current = true;
+              editorRef.current.update(value);
+              isUpdatingRef.current = false;
+            }
+          }, [value]);
+
+          return <div ref={containerRef} className="w-full h-[500px]" />;
+        }
+
         function App() {
           const [fileData, setFileData] = useState(null);
           const [originalData, setOriginalData] = useState(null);
           const [fileName, setFileName] = useState("wallet.json");
-          const [activeTab, setActiveTab] = useState("quick"); // "quick" ou "raw"
+          const [activeTab, setActiveTab] = useState("quick"); 
           const [showRestoreModal, setShowRestoreModal] = useState(false);
-          const [rawText, setRawText] = useState("");
+          const [focusedKey, setFocusedKey] = useState(null); // Pour la gestion propre du formatage des nombres
           const fileInputRef = useRef(null);
 
-          // Charger le fichier JSON
+          // Chargement du fichier
           const handleFileUpload = (e) => {
             const file = e.target.files[0];
             if (file) {
@@ -65,7 +126,6 @@
                 const json = JSON.parse(event.target.result);
                 setFileData(json);
                 setOriginalData(JSON.parse(event.target.result));
-                setRawText(JSON.stringify(json, null, 2));
               } catch (err) {
                 alert("Fichier JSON invalide !");
               }
@@ -73,50 +133,41 @@
             reader.readAsText(file);
           };
 
-          // Coller depuis le presse-papier
+          // Presse-papier
           const handlePaste = async () => {
             try {
               const text = await navigator.clipboard.readText();
               const json = JSON.parse(text);
               setFileData(json);
               setOriginalData(JSON.parse(text));
-              setRawText(JSON.stringify(json, null, 2));
               setFileName("wallet.json");
             } catch (err) {
               alert("Le contenu du presse-papier n'est pas un JSON valide.");
             }
           };
 
-          // Modifier une valeur (Quick Edit)
+          // Changement des valeurs numériques (Quick Edit)
           const handleCurrencyChange = (key, val) => {
-            const newValue = Math.max(0, parseInt(val) || 0);
+            const numericValue = Math.max(0, parseInt(val) || 0);
             const updated = {
               ...fileData,
               currencies: {
                 ...fileData.currencies,
                 [key]: {
                   ...fileData.currencies[key],
-                  value: newValue
+                  value: numericValue
                 }
               }
             };
             setFileData(updated);
-            setRawText(JSON.stringify(updated, null, 2));
           };
 
-          // Modifier le texte brut (Raw Edit)
-          const handleRawChange = (e) => {
-            const text = e.target.value;
-            setRawText(text);
-            try {
-              const json = JSON.parse(text);
-              setFileData(json);
-            } catch (err) {
-              // On ne bloque pas la saisie si le JSON est temporairement mal formé
-            }
+          // Changement global via l'éditeur d'arbre (Raw Edit)
+          const handleJsonEditorChange = (newJson) => {
+            setFileData(newJson);
           };
 
-          // Exporter le fichier modifié
+          // Exportation du fichier
           const handleExport = () => {
             if (!fileData) return;
             const blob = new Blob([JSON.stringify(fileData, null, 2)], { type: "application/json" });
@@ -128,18 +179,17 @@
             URL.revokeObjectURL(url);
           };
 
-          // Restaurer l'état d'origine
+          // Restauration
           const handleRestore = () => {
             const original = JSON.parse(JSON.stringify(originalData));
             setFileData(original);
-            setRawText(JSON.stringify(original, null, 2));
             setShowRestoreModal(false);
           };
 
           return (
             <div className="min-h-screen bg-white text-gray-800 flex flex-col items-center p-4">
               
-              {/* Top Header */}
+              {/* Top Title Bar */}
               <div className="w-full max-w-2xl border-b border-gray-100 pb-4 mb-6 flex items-center justify-between mt-2">
                 <span className="font-bold text-lg text-black tracking-tight">Subway Surfers Decrypter</span>
               </div>
@@ -186,28 +236,28 @@
                 /* ---------------- ÉCRAN D'ÉDITION ---------------- */
                 <div className="w-full max-w-2xl">
                   
-                  {/* File Info */}
+                  {/* File Badge Info */}
                   <div className="flex items-center gap-2 mb-4 text-black font-semibold text-sm bg-gray-50 px-3 py-1.5 rounded-lg w-fit">
                     📁 {fileName}
                   </div>
 
-                  {/* Top Actions */}
+                  {/* Top Action Buttons */}
                   <div className="grid grid-cols-2 gap-3 mb-4">
                     <button 
                       onClick={handleExport}
-                      className="border border-gray-200 hover:bg-gray-50 text-black font-medium py-2.5 rounded-xl transition flex items-center justify-center gap-2 text-sm"
+                      className="border border-gray-200 hover:bg-gray-50 text-black font-medium py-2.5 rounded-xl transition flex items-center justify-center gap-2 text-sm shadow-sm"
                     >
                       📥 Export
                     </button>
                     <button 
                       onClick={() => setShowRestoreModal(true)}
-                      className="border border-gray-200 hover:bg-gray-50 text-black font-medium py-2.5 rounded-xl transition flex items-center justify-center gap-2 text-sm"
+                      className="border border-gray-200 hover:bg-gray-50 text-black font-medium py-2.5 rounded-xl transition flex items-center justify-center gap-2 text-sm shadow-sm"
                     >
                       🔄 Restore
                     </button>
                   </div>
 
-                  {/* Navigation Tabs */}
+                  {/* Tabs Selector */}
                   <div className="grid grid-cols-2 bg-gray-100 p-1 rounded-xl mb-6">
                     <button 
                       onClick={() => setActiveTab("quick")}
@@ -226,48 +276,70 @@
                   {/* Tab Contents */}
                   {activeTab === "quick" ? (
                     <div className="space-y-4">
-                      {fileData.currencies && Object.keys(CURRENCY_MAP).map((key) => {
-                        const currency = fileData.currencies[key];
-                        if (!currency) return null;
-                        const meta = CURRENCY_MAP[key];
+                      {fileData.currencies ? (
+                        Object.keys(CURRENCY_MAP).map((key) => {
+                          const currency = fileData.currencies[key];
+                          if (!currency) return null;
+                          const meta = CURRENCY_MAP[key];
 
-                        return (
-                          <div key={key} className="border border-gray-200 rounded-xl p-4 bg-white shadow-sm flex flex-col gap-3">
-                            <div className="flex items-center gap-2 font-bold text-black text-sm">
-                              <span>{meta.icon}</span>
-                              <span>{meta.name}</span>
+                          // Détermine si l'input est actuellement sélectionné par l'utilisateur
+                          const isFocused = focusedKey === key;
+                          // Formate la valeur avec des virgules pour les milliers si l'utilisateur ne tape pas dedans
+                          const displayValue = isFocused 
+                            ? currency.value 
+                            : new Intl.NumberFormat('en-US').format(currency.value);
+
+                          return (
+                            <div key={key} className="border border-gray-200 rounded-2xl p-5 bg-white shadow-sm flex flex-col gap-3">
+                              <div className="flex items-center gap-2 font-bold text-black text-base">
+                                <span className="text-xl">{meta.icon}</span>
+                                <span>{meta.name}</span>
+                              </div>
+                              
+                              {/* Formulaire Capsule propre sans barre de séparation interne */}
+                              <div className="flex items-center border border-gray-200 rounded-xl bg-white h-12 shadow-sm focus-within:border-gray-400 transition">
+                                <button 
+                                  onClick={() => handleCurrencyChange(key, currency.value - 1)}
+                                  className="px-5 h-full text-gray-500 hover:text-black text-2xl font-light select-none transition"
+                                >
+                                  −
+                                </button>
+                                <input 
+                                  type="text" 
+                                  value={displayValue}
+                                  onFocus={() => setFocusedKey(key)}
+                                  onBlur={() => setFocusedKey(null)}
+                                  onChange={(e) => {
+                                    // Garde uniquement les chiffres saisis
+                                    const val = e.target.value.replace(/\D/g, '');
+                                    handleCurrencyChange(key, val);
+                                  }}
+                                  className="w-full text-center h-full font-bold text-gray-900 focus:outline-none bg-transparent text-base"
+                                />
+                                <button 
+                                  onClick={() => handleCurrencyChange(key, currency.value + 1)}
+                                  className="px-5 h-full text-gray-500 hover:text-black text-2xl font-light select-none transition"
+                                >
+                                  +
+                                </button>
+                              </div>
                             </div>
-                            <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden bg-white">
-                              <button 
-                                onClick={() => handleCurrencyChange(key, currency.value - 1)}
-                                className="px-4 py-2 bg-white hover:bg-gray-50 text-xl font-medium border-r border-gray-200 select-none transition"
-                              >
-                                −
-                              </button>
-                              <input 
-                                type="number" 
-                                value={currency.value}
-                                onChange={(e) => handleCurrencyChange(key, e.target.value)}
-                                className="w-full text-center py-2 font-semibold text-gray-900 focus:outline-none text-base"
-                              />
-                              <button 
-                                onClick={() => handleCurrencyChange(key, currency.value + 1)}
-                                className="px-4 py-2 bg-white hover:bg-gray-50 text-xl font-medium border-l border-gray-200 select-none transition"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })
+                      ) : (
+                        /* Message d'aide si le fichier n'est pas wallet.json (ex: achievements.json) */
+                        <div className="text-center py-12 border border-dashed border-gray-200 rounded-2xl p-6">
+                          <p className="text-gray-500 text-sm mb-2">Ce fichier ne contient pas de structure de monnaies standard.</p>
+                          <p className="text-blue-500 font-medium text-sm cursor-pointer hover:underline" onClick={() => setActiveTab("raw")}>
+                            👉 Utilisez l'onglet "Raw edit" pour modifier la structure de ce fichier.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div className="border border-gray-200 rounded-xl overflow-hidden bg-gray-50 p-2">
-                      <textarea
-                        className="w-full h-96 p-4 font-mono text-xs bg-white border border-gray-200 rounded-lg focus:outline-none resize-y leading-relaxed"
-                        value={rawText}
-                        onChange={handleRawChange}
-                      />
+                    /* Intégration de l'éditeur d'arbre JSON complet identique aux captures */
+                    <div className="bg-white rounded-xl shadow-sm">
+                      <JsonTreeEditor value={fileData} onChange={handleJsonEditorChange} />
                     </div>
                   )}
                 </div>
@@ -276,7 +348,7 @@
               {/* ---------------- MODAL RESTORE ---------------- */}
               {showRestoreModal && (
                 <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                  <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl border border-gray-100 transition transform scale-100">
+                  <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl border border-gray-100">
                     <h3 className="text-lg font-bold text-black mb-1 text-center">Restore to original state</h3>
                     <p className="text-sm text-gray-500 mb-6 text-center">
                       Restore the file to the original state. You will lose all your changes.
